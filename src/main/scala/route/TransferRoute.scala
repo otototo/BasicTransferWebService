@@ -41,15 +41,15 @@ class TransferRoute(config: Config, transferStorage: ActorRef)
     } ~ get {
       parameter(ToQuery) {
         to =>
-          qyeryForTransfers(InMemoryStorage.LoadTransfersTo(Account(to)))
+          queryForTransfers(InMemoryStorage.LoadTransfersTo(Account(to)))
       } ~ parameter(FromQuery) {
         from =>
-          qyeryForTransfers(InMemoryStorage.LoadTransfersFrom(Account(from)))
+          queryForTransfers(InMemoryStorage.LoadTransfersFrom(Account(from)))
       }
     }
   }
 
-  private def qyeryForTransfers(query: InMemoryStorage.StorageQuery): Route = {
+  private def queryForTransfers(query: InMemoryStorage.StorageQuery): Route = {
     onComplete(transferStorage ? query) {
       case Success(records: TransferRecords) =>
         complete(ExecutedTransfers.fromDomain(records))

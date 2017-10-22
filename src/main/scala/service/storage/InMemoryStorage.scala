@@ -37,7 +37,6 @@ class InMemoryStorage extends Actor {
       val transfers = loadTransferFrom(account)
       sender() ! TransferRecords(transfers)
   }
-
 }
 
 object InMemoryStorage {
