@@ -1,7 +1,7 @@
 Launching webservice requires sbt in PATH
 
 Tech stack:
-----------
+------
     Akka-HTTP, Scala, sbt
 
 To run:
@@ -49,6 +49,7 @@ Available Http endpoints:
 
 
 To improve upon:
+------
     Testing:
         * Test starting up the server
     App:
