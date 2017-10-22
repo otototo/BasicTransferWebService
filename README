@@ -1,0 +1,16 @@
+Launching webservice requires sbt in PATH
+
+Tech stack:
+    Akka-HTTP, Scala, sbt
+
+To run:
+	> sbt run
+
+To improve upon:
+    Testing:
+        * Test starting up the server
+    App:
+        * Introduce currency
+        * Add logging support
+        * Add Account validation
+        * Gather the rest of requirements
