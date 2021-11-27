@@ -1,40 +1,36 @@
 package route
 
-import akka.actor.{ActorRef, Props}
+import akka.actor.testkit.typed.scaladsl.ActorTestKit
+import akka.actor.typed.ActorSystem
 import akka.http.scaladsl.model.{ContentTypes, HttpEntity, StatusCodes, Uri}
 import akka.http.scaladsl.testkit.ScalatestRouteTest
-import akka.pattern.gracefulStop
-import com.typesafe.config.{Config, ConfigFactory}
-import org.scalatest.{BeforeAndAfter, FlatSpec, Matchers}
+import org.scalatest.BeforeAndAfter
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.must.Matchers
+import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 import route.request.{TransferRequest, TransferRequestFormat}
 import route.response.{ExecutedTransfers, ResponseFormats}
 import server.RouteComposition
 import service.storage.InMemoryStorage
 
-import scala.concurrent.duration._
-import scala.concurrent.{Await, ExecutionContextExecutor}
+import scala.concurrent.ExecutionContextExecutor
 
-class TransferRoutesTest extends FlatSpec
+class TransferRoutesTest extends AnyFlatSpec
   with Matchers
   with ScalatestRouteTest
   with BeforeAndAfter
   with ResponseFormats
   with TransferRequestFormat {
 
+  private lazy val testKit: ActorTestKit = ActorTestKit()
+
+  implicit def typedSystem: ActorSystem[Nothing] = testKit.system
+
+  override def createActorSystem(): akka.actor.ActorSystem = testKit.system.classicSystem
+
   implicit val executionContext: ExecutionContextExecutor = system.dispatcher
-  private val config: Config = ConfigFactory.load()
-  private var storageActor: ActorRef = _
-  private var routes: RouteComposition = _
-
-  before {
-    storageActor = system.actorOf(Props[InMemoryStorage], "storage")
-    routes = new RouteComposition(
-      new TransferRoute(config: Config, storageActor).route)
-  }
-
-  after {
-    Await.ready(gracefulStop(storageActor, 3.seconds), 3.seconds)
-  }
+  private val storageActor = testKit.spawn(InMemoryStorage())
+  lazy val routes: RouteComposition = new RouteComposition(new TransferRoute(storageActor).route)
 
   private def httpEntity(transfer: TransferRequest) =
     HttpEntity(ContentTypes.`application/json`, transferRequestFormat.write(transfer).toString())

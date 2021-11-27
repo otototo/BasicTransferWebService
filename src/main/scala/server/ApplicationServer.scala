@@ -1,43 +1,58 @@
 package server
 
-import akka.actor.{ActorRef, ActorSystem, Props}
+import akka.actor.typed.ActorSystem
+import akka.actor.typed.scaladsl.Behaviors
 import akka.http.scaladsl.Http
-import akka.stream.ActorMaterializer
-import com.typesafe.config.{Config, ConfigFactory}
+import akka.http.scaladsl.server.Route
 import route.TransferRoute
 import service.storage.InMemoryStorage
 
-import scala.concurrent.{ExecutionContextExecutor, Future}
+import scala.concurrent.Future
 import scala.util.{Failure, Success}
 
 object ApplicationServer {
   val Url = "localhost"
+  var bindingFuture: Future[Http.ServerBinding] = _
 
-  var bindingFuture: Future[Http.ServerBinding] =_
-
-  /**Setup up Actor System, Routes and Configuration that are required to run the application. */
+  /** Setup up Actor System, Routes and Configuration that are required to run the application. */
   def main(args: Array[String]): Unit = {
-    implicit val system: ActorSystem = ActorSystem()
-    implicit val materializer: ActorMaterializer = ActorMaterializer()
-    implicit val executionContext: ExecutionContextExecutor = system.dispatcher
-    val config: Config = ConfigFactory.load()
+    //    val transferStorage: ActorRef = system.actorOf(Props[InMemoryStorage], "storage")
+    //    val routes = new TransferRoute(config, transferStorage)
+    //    val composition = new RouteComposition(route.route)
+    val rootBehavior = Behaviors.setup[Nothing] { context =>
 
-    val transferStorage: ActorRef = system.actorOf(Props[InMemoryStorage], "storage")
-    start(new RouteComposition(new TransferRoute(config, transferStorage).route), config)
+      val transferStorage = context.spawn(InMemoryStorage(), "InMemoryStorageActor")
+      context.watch(transferStorage)
+
+      val routes: TransferRoute = new TransferRoute(transferStorage)(context.system)
+      val routeComposition = new RouteComposition(routes.route)
+      startHttpServer(routeComposition)(context.system)
+
+      Behaviors.empty
+    }
+
+    val system = ActorSystem[Nothing](rootBehavior, "TransferWebServer")
   }
 
-  /**Start the Akka Http Server and serve provided routes. */
-  def start(route : RouteComposition, config: Config)(implicit system: ActorSystem, materializer: ActorMaterializer): Unit = {
-    implicit val executionContext: ExecutionContextExecutor = system.dispatcher
-    val port = config.getInt("server.port")
-    bindingFuture = Http().bindAndHandle(route.composition, Url, port)
-    bindingFuture.onComplete{
-      case Success(_) => println(s"Successfully started up the server on $Url:$port")
-      case Failure(e) => println(s"Failed to start up the server duo to $e")
+  /** Start the Akka Http Server and serve provided routes. */
+  def startHttpServer(routes: RouteComposition)(implicit system: ActorSystem[_]): Unit = {
+    import system.executionContext
+
+    val futureBinding = Http().newServerAt("localhost", 8080).bind(routes.composition)
+    futureBinding.onComplete {
+      case Success(binding) =>
+        val address = binding.localAddress
+        system.log.info("Server online at http://{}:{}/", address.getHostString, address.getPort)
+      case Failure(exception) =>
+        system.log.error("Failed to bind HTTP endpoint, terminating system", exception)
+        system.terminate();
     }
   }
-  /**Stop Akka Http Server and terminate actor system*/
-  def stop()(implicit system: ActorSystem, executionContext: ExecutionContextExecutor): Unit = {
+
+  /** Stop Akka Http Server and terminate actor system */
+  def stop()(implicit system: ActorSystem[_]): Unit = {
+    import system.executionContext
+
     bindingFuture.flatMap(_.unbind()).onComplete(_ => system.terminate)
   }
 }

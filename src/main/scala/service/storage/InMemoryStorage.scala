@@ -1,53 +1,42 @@
 package service.storage
 
 import akka.Done
-import akka.actor.Actor
+import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.{ActorRef, Behavior}
 import domain.{Account, TransferRecord, TransferRecords}
 
-import scala.collection.mutable
-
-class InMemoryStorage extends Actor {
-
-  import InMemoryStorage._
-
-  private val transfersTo = mutable.HashMap.empty[Account, Seq[TransferRecord]]
-  private val transfersFrom = mutable.HashMap.empty[Account, Seq[TransferRecord]]
-
-  private def saveTransfer(transferRecord: TransferRecord) = {
-    val currentTransfersTo: Seq[TransferRecord] = transfersTo.getOrElse(transferRecord.to, Nil)
-    transfersTo += ((transferRecord.to, currentTransfersTo :+ transferRecord))
-    val currentTransfersFrom: Seq[TransferRecord] = transfersFrom.getOrElse(transferRecord.to, Nil)
-    transfersFrom += ((transferRecord.from, currentTransfersFrom :+ transferRecord))
-  }
-
-  private def loadTransferTo(account: Account): Seq[TransferRecord] =
-    transfersTo.getOrElse(account, Nil)
-
-  private def loadTransferFrom(account: Account): Seq[TransferRecord] =
-    transfersFrom.getOrElse(account, Nil)
-
-  override def receive: PartialFunction[Any, Unit] = {
-    case Save(record) =>
-      saveTransfer(record)
-      sender() ! Done
-    case LoadTransfersTo(account) =>
-      val transfers = loadTransferTo(account)
-      sender() ! TransferRecords(transfers)
-    case LoadTransfersFrom(account) =>
-      val transfers = loadTransferFrom(account)
-      sender() ! TransferRecords(transfers)
-  }
-}
+import scala.collection.immutable.HashMap
 
 object InMemoryStorage {
+  sealed trait Command
+  final case class Save(transferRecord: TransferRecord, replyTo: ActorRef[Done]) extends Command
+  final case class LoadTransfersTo(to: Account, replyTo: ActorRef[TransferRecords]) extends Command
+  final case class LoadTransfersFrom(from: Account, replyTo: ActorRef[TransferRecords]) extends Command
 
-  sealed trait StorageCommand
+  def apply(): Behavior[Command] = registry(
+    HashMap.empty[Account, Seq[TransferRecord]],
+    HashMap.empty[Account, Seq[TransferRecord]])
 
-  case class Save(transferRecord: TransferRecord) extends StorageCommand
+  private def registry(transfersTo: HashMap[Account, Seq[TransferRecord]],
+                       transfersFrom: HashMap[Account, Seq[TransferRecord]]): Behavior[Command] = {
+    Behaviors.receiveMessage {
+      case Save(transferRecord, replyTo) =>
+        val currentTransfersTo: Seq[TransferRecord] = transfersTo.getOrElse(transferRecord.to, Nil)
+        val updatedTo = transfersTo + ((transferRecord.to, currentTransfersTo :+ transferRecord))
 
-  sealed trait StorageQuery
+        val currentTransfersFrom: Seq[TransferRecord] = transfersFrom.getOrElse(transferRecord.to, Nil)
+        val updatedFrom = transfersFrom + ((transferRecord.from, currentTransfersFrom :+ transferRecord))
 
-  case class LoadTransfersTo(to: Account) extends StorageQuery
-
-  case class LoadTransfersFrom(from: Account) extends StorageQuery
+        replyTo ! Done
+        registry(updatedTo, updatedFrom);
+      case LoadTransfersTo(account, replyTo) =>
+        val transfers = transfersTo.getOrElse(account, Nil)
+        replyTo ! TransferRecords(transfers)
+        Behaviors.same
+      case LoadTransfersFrom(account, replyTo) =>
+        val transfers = transfersFrom.getOrElse(account, Nil)
+        replyTo ! TransferRecords(transfers)
+        Behaviors.same
+    }
+  }
 }

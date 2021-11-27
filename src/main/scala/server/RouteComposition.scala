@@ -12,7 +12,7 @@ class RouteComposition(routes: Route*)
       .mapRejectionResponse {
         case res@HttpResponse(_, _, ent: HttpEntity.Strict, _) =>
           val message = ent.data.utf8String.replaceAll("\"", """\"""")
-          res.copy(entity = HttpEntity(ContentTypes.`application/json`, s"""{"rejection": "$message"}"""))
+          res.withEntity(entity = HttpEntity(ContentTypes.`application/json`, s"""{"rejection": "$message"}"""))
 
         case x => x
       }

@@ -1,23 +1,23 @@
 package route
 
-import akka.actor.{ActorRef, ActorSystem}
+import akka.Done
+import akka.actor.typed.scaladsl.AskPattern.{Askable, schedulerFromActorSystem}
+import akka.actor.typed.{ActorRef, ActorSystem}
 import akka.http.scaladsl.model.StatusCodes
 import akka.http.scaladsl.server.{Directives, Route}
-import akka.pattern._
-import akka.stream.Materializer
 import akka.util.Timeout
-import com.typesafe.config.Config
 import domain._
 import route.request.{TransferRequest, TransferRequestFormat}
 import route.response._
 import service.storage.InMemoryStorage
+import service.storage.InMemoryStorage.{LoadTransfersFrom, LoadTransfersTo, Save}
 
+import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.{Failure, Success}
 
-class TransferRoute(config: Config, transferStorage: ActorRef)
-                   (implicit val actorSystem: ActorSystem,
-                                    materializer: Materializer)
+class TransferRoute(transferStorage: ActorRef[InMemoryStorage.Command])
+                   (implicit val actorSystem: ActorSystem[_])
   extends Directives
     with TransferRequestFormat
     with ResponseFormats {
@@ -30,33 +30,52 @@ class TransferRoute(config: Config, transferStorage: ActorRef)
     post {
       entity(as[TransferRequest]) {
         transferRequest =>
-          onComplete(transferStorage ? InMemoryStorage.Save(transferRequest.toDomain)) {
-            case Success(_) =>
-              complete(Message(StatusCodes.OK.intValue, "Transfer finished."))
-            case Failure(e) =>
-              complete(Message(StatusCodes.InternalServerError.intValue,
-                "Transfer failed to due an unexpected error."))
-          }
+          handleEventualDone(saveTransfer(transferRequest))
       }
     } ~ get {
       parameter(ToQuery) {
         to =>
-          queryForTransfers(InMemoryStorage.LoadTransfersTo(Account(to)))
+          handleEventualTransfer(transferTo(to))
       } ~ parameter(FromQuery) {
         from =>
-          queryForTransfers(InMemoryStorage.LoadTransfersFrom(Account(from)))
+          handleEventualTransfer(transferFrom(from))
       }
     }
   }
 
-  private def queryForTransfers(query: InMemoryStorage.StorageQuery): Route = {
-    onComplete(transferStorage ? query) {
+  private def handleEventualDone(eventualDone: Future[Done]) = {
+    onComplete(eventualDone) {
+      case Success(_) =>
+        complete(Message(StatusCodes.OK.intValue, "Transfer finished."))
+      case Failure(e) =>
+        handleFailure(e)
+    }
+  }
+
+  private def handleEventualTransfer(eventualRecords: Future[TransferRecords]) = {
+    onComplete(eventualRecords) {
       case Success(records: TransferRecords) =>
         complete(ExecutedTransfers.fromDomain(records))
       case Failure(e) =>
-        complete(Message(StatusCodes.InternalServerError.intValue,
-          s"Transfer failed to due an unexpected error: ${e.getMessage}"))
+        handleFailure(e)
     }
+  }
+
+  private def handleFailure(e: Throwable) = {
+    complete(Message(StatusCodes.InternalServerError.intValue,
+      s"Transfer failed to due an unexpected error: ${e.getMessage}"))
+  }
+
+  private def transferFrom(from: String) = {
+    transferStorage ? (LoadTransfersFrom(Account(from), _))
+  }
+
+  private def transferTo(to: String) = {
+    transferStorage ? (LoadTransfersTo(Account(to), _))
+  }
+
+  private def saveTransfer(transferRequest: TransferRequest): Future[Done] = {
+    transferStorage ? (Save(transferRequest.toDomain, _))
   }
 }
 
